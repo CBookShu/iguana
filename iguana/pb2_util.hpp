@@ -1,5 +1,6 @@
 #pragma once
 #include "pb_util.hpp"
+#include <sstream>
 
 namespace iguana {
 struct pb_unknown_fields {
@@ -9,20 +10,27 @@ struct pb_unknown_fields {
   using arr_t = std::map<uint32_t, std::vector<var_t>>;
 
   pb_unknown_fields() = default;
+  pb_unknown_fields(pb_unknown_fields&& other) noexcept
+      : unknowns_(std::exchange(other.unknowns_, {}))
+  {}
 
   void push(uint32_t key, std::string_view data) {
     uint32_t field_number = key >> 3;
     unknowns_[field_number].emplace_back(std::make_pair(key, data));
   }
 
-  template <typename... Args>
-  auto new_unknown(uint32_t field_number, Args&&... args) {
+  void new_unknown(uint32_t field_number, pb_unknown_fields& tmp) {
+    if (tmp.empty()) {
+          return;
+    }
+    std::vector<var_t> only_one;
+    only_one.emplace_back(var_t{std::in_place_index<2>, std::move(tmp)});
     auto it = unknowns_.emplace(
-        field_number, std::vector<var_t>{var_t(std::forward<Args>(args)...)});
+        field_number,
+        std::move(only_one));
     if (!it.second) {
       throw std::runtime_error("repeate field_number");
     }
-    return &it.first->second;
   }
 
   size_t get_unknown_size() const {
@@ -57,11 +65,11 @@ struct pb_unknown_fields {
 
   template <typename It>
   void write_unknown_field(It& it, size_t last_field_no) {
-    for (auto& unknown : unknowns_) {
-      if (unknown.first <= last_field_no) {
-        continue;
-      }
-      for (auto& var : unknown.second) {
+      // iguana 的pb 编码无法指定，也就永远是顺序的，所以后面只要大于last_field_no 统统都是unknown
+    auto b =
+        unknowns_.upper_bound(last_field_no);
+    for (; b != unknowns_.end(); ++b) {
+      for (auto& var : b->second) {
         if (auto* p = std::get_if<pb_unknown_pair>(&var); p) {
           detail::serialize_varint(p->first, it);  // tag
           memcpy(it, p->second.data(), p->second.size());
@@ -132,10 +140,10 @@ constexpr inline WireType get_wire2_type() {
     return WireType::LengthDelimeted;
   }
   else if constexpr (optional_v<T>) {
-    return get_wire_type<typename T::value_type>();
+    return get_wire2_type<typename T::value_type>();
   }
   else if constexpr (is_sequence_container<T>::value) {
-    return get_wire_type<typename T::value_type>();
+    return get_wire2_type<typename T::value_type>();
   }
   else {
     throw std::runtime_error("unknown type");
@@ -145,6 +153,28 @@ constexpr inline WireType get_wire2_type() {
 template <typename T>
 constexpr bool is_lenprefix2_v =
     (get_wire2_type<T>() == WireType::LengthDelimeted);
+
+template <size_t field_no, typename Type, typename Arr>
+IGUANA_INLINE size_t pb2_oneof_size(Type&& t, Arr& size_arr) {
+  using T = std::decay_t<Type>;
+  int len = 0;
+  std::visit(
+      [&len, &size_arr](auto&& value) IGUANA__INLINE_LAMBDA {
+        using raw_value_type = decltype(value);
+        using value_type =
+            std::remove_const_t<std::remove_reference_t<decltype(value)>>;
+        constexpr auto offset =
+            get_variant_index<T, value_type, std::variant_size_v<T> - 1>();
+        constexpr uint32_t key =
+            ((field_no + offset) << 3) |
+            static_cast<uint32_t>(get_wire2_type<value_type>());
+        len = pb2_key_value_size<variant_uint32_size_constexpr(key), false>(
+            std::forward<raw_value_type>(value), size_arr);
+      },
+      std::forward<Type>(t));
+  return len;
+}
+
 
 template <size_t key_size, bool omit_default_val, typename Type, typename Arr>
 IGUANA_INLINE size_t pb2_key_value_size(Type&& t, Arr& size_arr) {
@@ -167,12 +197,21 @@ IGUANA_INLINE size_t pb2_key_value_size(Type&& t, Arr& size_arr) {
           using U = typename field_type::value_type;
           using sub_type = typename field_type::sub_type;
           auto& val = value.value(t);
-          constexpr uint32_t sub_key =
-              (value.field_no << 3) |
-              static_cast<uint32_t>(get_wire2_type<U>());
-          constexpr auto sub_keysize = variant_uint32_size_constexpr(sub_key);
-          len +=
-              pb2_key_value_size<sub_keysize, omit_default_val>(val, size_arr);
+          if constexpr (variant_v<U>) {
+            constexpr auto offset =
+                get_variant_index<U, sub_type, std::variant_size_v<U> - 1>();
+            if constexpr (offset == 0) {
+              len += pb2_oneof_size<value.field_no>(val, size_arr);
+            }
+          }
+          else {
+            constexpr uint32_t sub_key =
+                (value.field_no << 3) |
+                static_cast<uint32_t>(get_wire2_type<U>());
+            constexpr auto sub_keysize = variant_uint32_size_constexpr(sub_key);
+            len += pb2_key_value_size<sub_keysize, omit_default_val>(val,
+                                                                     size_arr);
+          }
         },
         std::make_index_sequence<SIZE>{});
     if constexpr (inherits_from_base_v<T>) {

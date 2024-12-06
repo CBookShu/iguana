@@ -22,6 +22,13 @@ IGUANA_INLINE void decode2_pair_value(T& val, std::string_view& pb_str,
   from_pb2_impl(val, pb_str, 0, unknowns);
 }
 
+template <typename T, typename Field>
+IGUANA_INLINE void parse_oneof2(T& t, const Field& f, std::string_view& pb_str,
+                                pb_unknown_fields* unknowns = nullptr) {
+  using item_type = typename std::decay_t<Field>::sub_type;
+  from_pb2_impl(t.template emplace<item_type>(), pb_str, f.field_no, unknowns);
+}
+
 template <typename T>
 IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
                                  uint32_t field_no,
@@ -43,9 +50,7 @@ IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
       if (field_no != 0) {
         pb_unknown_fields tmp;
         from_pb2(val, pb_str.substr(0, size), &tmp);
-        if (!tmp.empty()) {
-          unknowns->new_unknown(field_no, std::move(tmp));
-        }
+        unknowns->new_unknown(field_no, std::move(tmp));
       }
       else {
         from_pb2(val, pb_str.substr(0, size), unknowns);
@@ -184,22 +189,35 @@ IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str,
     if (it != map.end()) {
       auto& member = map.at(field_number);
       std::visit(
-          [&t, &pb_str, &unknowns, wire_type, key, field_number](auto& val) {
+          [&t, &pb_str, &unknowns, wire_type, key, field_number,
+           &member](auto& val) {
             using sub_type = typename std::decay_t<decltype(val)>::sub_type;
             using value_type = typename std::decay_t<decltype(val)>::value_type;
+            auto n = typeid(sub_type).name();
+            auto n2 = typeid(value_type).name();
             if (wire_type != detail::get_wire2_type<sub_type>()) {
               throw std::runtime_error("unmatched wire_type");
             }
-
-            if (unknowns) {
-              pb_unknown_fields tmp;
-              detail::from_pb2_impl(val.value(t), pb_str, val.field_no, &tmp);
-              if (!tmp.empty()) {
+            if constexpr (variant_v<value_type>) {
+              if (unknowns) {
+                pb_unknown_fields tmp;
+                detail::parse_oneof2(val.value(t), val, pb_str, &tmp);
                 unknowns->new_unknown(field_number, std::move(tmp));
+              }
+              else {
+                detail::parse_oneof2(val.value(t), val, pb_str, nullptr);
               }
             }
             else {
-              detail::from_pb2_impl(val.value(t), pb_str, val.field_no, nullptr);
+              if (unknowns) {
+                pb_unknown_fields tmp;
+                detail::from_pb2_impl(val.value(t), pb_str, val.field_no, &tmp);
+                unknowns->new_unknown(field_number, std::move(tmp));
+              }
+              else {
+                detail::from_pb2_impl(val.value(t), pb_str, val.field_no,
+                                      nullptr);
+              }
             }
           },
           member);
