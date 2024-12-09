@@ -1,5 +1,6 @@
 #include <charconv>  // for to_chars
 #include <iostream>  // for std::cout
+#include <cassert>
 
 namespace iguana {
 
@@ -168,7 +169,75 @@ void user_defined_tochars_example() {
   std::cout << ss << std::endl;
 }
 
+struct msvc_test_inner {
+	int a1;
+	int a2;
+	int a3;
+
+	std::vector<int> a4;
+
+    bool operator == (const msvc_test_inner& other) const {
+        return std::tie(a1, a2, a3, a4)
+            == std::tie(other.a1, other.a2, other.a3, other.a4);
+    }
+};
+YLT_REFL(msvc_test_inner, a1, a2, a3, a4);
+
+struct msvc_test {
+	std::int32_t a1 = 0;
+	std::vector<std::int32_t> a2;
+	std::optional<std::map<std::string, int32_t>> a3;
+	std::optional<std::string> a4;
+	std::vector<msvc_test_inner> a5;
+    std::optional<msvc_test_inner> a6;
+
+    bool operator==(const msvc_test& other) const { 
+        return std::tie(a1, a2, a3, a4, a5, a6)
+            == std::tie(other.a1, other.a2, other.a3, other.a4, other.a5, other.a6);
+    }
+};
+YLT_REFL(msvc_test, a1, a2, a3, a4, a5, a6);
+
+struct msvc_test1 {
+    std::optional<std::string> a1;
+};
+YLT_REFL(msvc_test1, a1);
+
+void msvc_json_err_test() {
+    msvc_test st_2;
+    st_2.a1 = 1;
+    st_2.a2.push_back(2);
+    st_2.a2.push_back(3);
+    st_2.a3.emplace();
+    st_2.a3.value().emplace("4", 5);
+    st_2.a3.value().emplace("5", 6);
+    st_2.a4 = "name:7";     // 验证 optional<string> 并且n开头
+    st_2.a5.emplace_back(msvc_test_inner());
+    st_2.a5.back().a1 = 8;
+    st_2.a5.back().a2 = 9;
+    st_2.a5.back().a3 = 10;
+    st_2.a5.back().a4.push_back(11);
+    st_2.a5.back().a4.push_back(12);
+    st_2.a5.back().a4.push_back(13);
+    st_2.a6.emplace().a1 = 14;
+    st_2.a6.emplace().a2 = 15;
+    st_2.a6.emplace().a3 = 16;
+    st_2.a6.emplace().a4.push_back(17);
+    st_2.a6.emplace().a4.push_back(18);
+    st_2.a6.emplace().a4.push_back(19);
+
+
+    std::string json;
+    iguana::to_json(st_2, json);
+
+    msvc_test st;
+    iguana::from_json(st, json);
+
+    assert(st == st_2);
+}
+
 int main(void) {
+  msvc_json_err_test();
   test_disorder();
   test_v();
   test();

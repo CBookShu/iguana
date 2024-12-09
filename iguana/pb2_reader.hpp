@@ -3,15 +3,15 @@
 #include "pb_reader.hpp"
 
 namespace iguana {
+template <typename T>
+IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str);
 namespace detail {
 template <typename T>
 IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
-                                 uint32_t field_no = 0,
-                                 pb_unknown_fields* unknowns = nullptr);
+                                 uint32_t field_no = 0);
 
 template <typename T>
-IGUANA_INLINE void decode2_pair_value(T& val, std::string_view& pb_str,
-                                      pb_unknown_fields* unknowns = nullptr) {
+IGUANA_INLINE void decode2_pair_value(T& val, std::string_view& pb_str) {
   size_t pos;
   uint32_t key = detail::decode_varint(pb_str, pos);
   pb_str = pb_str.substr(pos);
@@ -19,20 +19,18 @@ IGUANA_INLINE void decode2_pair_value(T& val, std::string_view& pb_str,
   if (wire_type != detail::get_wire2_type<std::remove_reference_t<T>>()) {
     return;
   }
-  from_pb2_impl(val, pb_str, 0, unknowns);
+  from_pb2_impl(val, pb_str, 0);
 }
 
 template <typename T, typename Field>
-IGUANA_INLINE void parse_oneof2(T& t, const Field& f, std::string_view& pb_str,
-                                pb_unknown_fields* unknowns = nullptr) {
+IGUANA_INLINE void parse_oneof2(T& t, const Field& f, std::string_view& pb_str) {
   using item_type = typename std::decay_t<Field>::sub_type;
-  from_pb2_impl(t.template emplace<item_type>(), pb_str, f.field_no, unknowns);
+  from_pb2_impl(t.template emplace<item_type>(), pb_str, f.field_no);
 }
 
 template <typename T>
 IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
-                                 uint32_t field_no,
-                                 pb_unknown_fields* unknowns) {
+                                 uint32_t field_no) {
   size_t pos = 0;
   if constexpr (ylt_refletable_v<T>) {
     size_t pos;
@@ -46,19 +44,7 @@ IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
       return;
     }
 
-    if (unknowns) {
-      if (field_no != 0) {
-        pb_unknown_fields tmp;
-        from_pb2(val, pb_str.substr(0, size), &tmp);
-        unknowns->new_unknown(field_no, std::move(tmp));
-      }
-      else {
-        from_pb2(val, pb_str.substr(0, size), unknowns);
-      }
-    }
-    else {
-      from_pb2(val, pb_str.substr(0, size));
-    }
+    from_pb2(val, pb_str.substr(0, size));
 
     pb_str = pb_str.substr(size);
   }
@@ -67,7 +53,7 @@ IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
     using item_type = typename T::value_type;
     while (!pb_str.empty()) {
       item_type item{};
-      from_pb2_impl(item, pb_str, 0, unknowns);
+      from_pb2_impl(item, pb_str, 0);
       val.push_back(std::move(item));
       if (pb_str.empty()) {
         break;
@@ -94,8 +80,8 @@ IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
               "Invalid fixed int value: too few bytes.");
         }
       item_type item = {};
-      decode2_pair_value(item.first, pb_str, unknowns);
-      decode2_pair_value(item.second, pb_str, unknowns);
+      decode2_pair_value(item.first, pb_str);
+      decode2_pair_value(item.second, pb_str);
       val.emplace(std::move(item));
 
       if (pb_str.empty()) {
@@ -161,11 +147,11 @@ IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
   else if constexpr (std::is_enum_v<T>) {
     using U = std::underlying_type_t<T>;
     U value{};
-    from_pb2_impl(value, pb_str, 0, unknowns);
+    from_pb2_impl(value, pb_str, 0);
     val = static_cast<T>(value);
   }
   else if constexpr (optional_v<T>) {
-    from_pb2_impl(val.emplace(), pb_str, 0, unknowns);
+    from_pb2_impl(val.emplace(), pb_str, 0);
   }
   else {
     static_assert(!sizeof(T), "err");
@@ -174,8 +160,7 @@ IGUANA_INLINE void from_pb2_impl(T& val, std::string_view& pb_str,
 }  // namespace detail
 
 template <typename T>
-IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str,
-                            pb_unknown_fields* unknowns = nullptr) {
+IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str) {
   if (pb_str.empty())
     IGUANA_UNLIKELY { return; }
   size_t pos = 0;
@@ -189,35 +174,18 @@ IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str,
     if (it != map.end()) {
       auto& member = map.at(field_number);
       std::visit(
-          [&t, &pb_str, &unknowns, wire_type, key, field_number,
+          [&t, &pb_str, wire_type, key, field_number,
            &member](auto& val) {
             using sub_type = typename std::decay_t<decltype(val)>::sub_type;
             using value_type = typename std::decay_t<decltype(val)>::value_type;
-            auto n = typeid(sub_type).name();
-            auto n2 = typeid(value_type).name();
             if (wire_type != detail::get_wire2_type<sub_type>()) {
               throw std::runtime_error("unmatched wire_type");
             }
             if constexpr (variant_v<value_type>) {
-              if (unknowns) {
-                pb_unknown_fields tmp;
-                detail::parse_oneof2(val.value(t), val, pb_str, &tmp);
-                unknowns->new_unknown(field_number, std::move(tmp));
-              }
-              else {
-                detail::parse_oneof2(val.value(t), val, pb_str, nullptr);
-              }
+              detail::parse_oneof2(val.value(t), val, pb_str);
             }
             else {
-              if (unknowns) {
-                pb_unknown_fields tmp;
-                detail::from_pb2_impl(val.value(t), pb_str, val.field_no, &tmp);
-                unknowns->new_unknown(field_number, std::move(tmp));
-              }
-              else {
-                detail::from_pb2_impl(val.value(t), pb_str, val.field_no,
-                                      nullptr);
-              }
+              detail::from_pb2_impl(val.value(t), pb_str, val.field_no);
             }
           },
           member);
@@ -235,15 +203,15 @@ IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str,
       // TODO: skip field no and fresh pos
       switch (wire_type) {
         case WireType::Varint: {
-          auto v = detail::decode_varint(pb_str, pos);
-          if (unknowns) {
-            unknowns->push(key, pb_str.substr(0, pos));
+          detail::decode_varint(pb_str, pos);
+          if constexpr (detail::is_has_unknown_fields<T>) {
+            detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
           }
         } break;
         case WireType::Fixed64:
           pos = 8;
-          if (unknowns) {
-            unknowns->push(key, pb_str.substr(0, pos));
+          if constexpr (detail::is_has_unknown_fields<T>) {
+            detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
           }
           break;
         case WireType::LengthDelimeted: {
@@ -251,16 +219,16 @@ IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str,
           if (pb_str.size() < (pos + sz)) {
             throw std::runtime_error("string len err");
           }
-          if (unknowns) {
+          if constexpr (detail::is_has_unknown_fields<T>) {
             auto s = pb_str.substr(0, sz + pos);
-            unknowns->push(key, s);
+            detail::pb2_push_unknown_fields(t, key, s);
           }
           pos += sz;
         } break;
         case WireType::Fixed32:
           pos = 4;
-          if (unknowns) {
-            unknowns->push(key, pb_str.substr(0, pos));
+          if constexpr (detail::is_has_unknown_fields<T>) {
+            detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
           }
           break;
         default:

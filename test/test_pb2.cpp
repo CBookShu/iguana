@@ -651,14 +651,32 @@ TEST_CASE("test variant") {
   }
 }
 
+struct test_unknown_inner1 {
+    int a1;
+
+    iguana::pb2_unknown_view<> unknown_;
+};
+YLT_REFL(test_unknown_inner1, a1);
+REFL_PB2_UNKNOWN_FIELDS(test_unknown_inner1, unknown_)
+
+struct test_unknown_inner2 {
+    int a1;
+    int a2;
+    int a3;
+};
+YLT_REFL(test_unknown_inner2, a1, a2, a3);
+
 struct test_unknown_fields1 {
     int a1;
+
+    iguana::pb2_unknown_view<> unknown_;
 
     bool operator == (const test_unknown_fields1& other) const {
         return a1 == other.a1;
     }
 };
 YLT_REFL(test_unknown_fields1, a1);
+REFL_PB2_UNKNOWN_FIELDS(test_unknown_fields1, unknown_)
 
 struct test_unknown_fields2 {
     int a1;
@@ -666,13 +684,14 @@ struct test_unknown_fields2 {
     std::vector < test_unknown_fields1> a3;
     std::map<std::string, test_unknown_fields1> a4;
     std::variant<int, std::string> a5;
+    std::optional<test_unknown_fields1> a6;
 
     bool operator == (const test_unknown_fields2& other) const {
-        return std::tie(a1, a2, a3, a4, a5)
-            == std::tie(other.a1, other.a2, other.a3, other.a4, other.a5);
+        return std::tie(a1, a2, a3, a4, a5, a6)
+            == std::tie(other.a1, other.a2, other.a3, other.a4, other.a5, other.a6);
     }
 };
-YLT_REFL(test_unknown_fields2, a1, a2, a3, a4, a5);
+YLT_REFL(test_unknown_fields2, a1, a2, a3, a4, a5, a6);
 
 TEST_CASE("unknown_fields") {
     test_unknown_fields2 st2;
@@ -681,22 +700,32 @@ TEST_CASE("unknown_fields") {
     st2.a3.emplace_back(test_unknown_fields1{3});
     st2.a4.emplace("4", test_unknown_fields1{5});
     st2.a5 = "6";
+    st2.a6.emplace().a1 = 100;
     std::string st2_str;
     iguana::to_pb2(st2, st2_str);
 
     test_unknown_fields1 st1;
-    iguana::pb_unknown_fields unknown_st1;
-    iguana::from_pb2(st1, st2_str, &unknown_st1);
-    std::cout << unknown_st1.dump() << std::endl;
+    iguana::from_pb2(st1, st2_str);
 
     std::string st1_str;
-    iguana::to_pb2(st1, st1_str, &unknown_st1);
+    iguana::to_pb2(st1, st1_str);
     CHECK(st1_str == st2_str);
     
     test_unknown_fields2 st2_1;
     iguana::from_pb2(st2_1, st1_str);
 
     CHECK(st2 == st2_1);
+
+    test_unknown_inner2 i2;
+    i2.a1 = 10;
+    i2.a2 = 11;
+    i2.a3 = 12;
+    std::string i2s;
+    iguana::to_pb2(i2, i2s);
+
+    test_unknown_inner1 i1;
+    iguana::from_pb2(i1, i2s);
+
 }
 
 #endif
