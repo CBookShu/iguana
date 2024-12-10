@@ -200,50 +200,45 @@ IGUANA_INLINE void from_pb2(T& t, std::string_view pb_str) {
       }
     }
     else {
-      // TODO: skip field no and fresh pos
-      switch (wire_type) {
-        case WireType::Varint: {
-          detail::decode_varint(pb_str, pos);
-          if constexpr (detail::is_has_unknown_fields<T>) {
-            detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
+      if constexpr (detail::is_has_unknown_fields<T>) {
+          switch (wire_type) {
+          case WireType::Varint: {
+              detail::decode_varint(pb_str, pos);
+              detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
+          } break;
+          case WireType::Fixed64:
+              pos = 8;
+              detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
+              break;
+          case WireType::LengthDelimeted: {
+              auto sz = detail::decode_varint(pb_str, pos);
+              if (pb_str.size() < (pos + sz)) {
+                  throw std::runtime_error("string len err");
+              }
+              auto s = pb_str.substr(0, sz + pos);
+              detail::pb2_push_unknown_fields(t, key, s);
+              pos += sz;
+          } break;
+          case WireType::Fixed32:
+              pos = 4;
+              detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
+              break;
+          default:
+              throw std::runtime_error("err wire_type");
           }
-        } break;
-        case WireType::Fixed64:
-          pos = 8;
-          if constexpr (detail::is_has_unknown_fields<T>) {
-            detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
+          pb_str = pb_str.substr(pos);
+          if (!pb_str.empty()) {
+              IGUANA_LIKELY{
+                  key = detail::decode_varint(pb_str, pos);
+                  wire_type = static_cast<WireType>(key & 0b0111);
+                  field_number = key >> 3;
+              }
           }
-          break;
-        case WireType::LengthDelimeted: {
-          auto sz = detail::decode_varint(pb_str, pos);
-          if (pb_str.size() < (pos + sz)) {
-            throw std::runtime_error("string len err");
+          else {
+              return;
           }
-          if constexpr (detail::is_has_unknown_fields<T>) {
-            auto s = pb_str.substr(0, sz + pos);
-            detail::pb2_push_unknown_fields(t, key, s);
-          }
-          pos += sz;
-        } break;
-        case WireType::Fixed32:
-          pos = 4;
-          if constexpr (detail::is_has_unknown_fields<T>) {
-            detail::pb2_push_unknown_fields(t, key, pb_str.substr(0, pos));
-          }
-          break;
-        default:
-          throw std::runtime_error("err wire_type");
-      }
-      pb_str = pb_str.substr(pos);
-      if (!pb_str.empty()) {
-        IGUANA_LIKELY {
-          key = detail::decode_varint(pb_str, pos);
-          wire_type = static_cast<WireType>(key & 0b0111);
-          field_number = key >> 3;
-        }
-      }
-      else {
-        return;
+      } else {
+          throw std::runtime_error("ign: pb2 unknown fields");
       }
     }
   }

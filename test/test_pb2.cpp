@@ -659,6 +659,11 @@ struct test_unknown_inner1 {
 YLT_REFL(test_unknown_inner1, a1);
 REFL_PB2_UNKNOWN_FIELDS(test_unknown_inner1, unknown_)
 
+struct test_unknown_inner11 {
+    int a1;
+};
+YLT_REFL(test_unknown_inner11, a1);
+
 struct test_unknown_inner2 {
     int a1;
     int a2;
@@ -726,6 +731,13 @@ TEST_CASE("unknown_fields") {
     test_unknown_inner1 i1;
     iguana::from_pb2(i1, i2s);
 
+    test_unknown_inner11 i11;
+    try {
+        // i2s no unknowns fields,  will throw exception
+        iguana::from_pb2(i11, i2s);
+    } catch(std::exception& e) {
+        std::cout << e.what() << std::endl;
+    }
 }
 
 #endif
