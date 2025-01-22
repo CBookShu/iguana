@@ -320,10 +320,10 @@ IGUANA_INLINE void to_pb2(T const& t, Stream& out) {
   if constexpr (is_resizable_char_container_v<Stream>) {
     detail::resize(out, byte_len);
     memory_writer writer{out.data()};
-    detail::to_pb2_impl<0>(t, sz_ptr, writer);
+    detail::to_pb2_impl<0, false>(t, sz_ptr, writer);
   }
   else if constexpr (char_writer<Stream>) {
-    detail::to_pb2_impl<0>(t, sz_ptr, out);
+    detail::to_pb2_impl<0, false>(t, sz_ptr, out);
   }
   else {
     static_assert(!sizeof(Stream), "Invalid stream type");
